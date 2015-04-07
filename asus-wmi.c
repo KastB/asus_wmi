@@ -167,11 +167,6 @@ struct agfn_args {
 	u8 err;
 } __packed;
 
-struct num_fan_args {
-	struct agfn_args agfn;
-	u32 nmfn;
-} __packed;
-
 struct fan_args {
 	struct agfn_args agfn;
 	u8 fan;
@@ -1099,29 +1094,6 @@ exit:
 /*
  * Hwmon device
  */
-static int asus_hwmon_agfn_get_fan_number(struct asus_wmi *asus, int *num_fans)
-{
-	struct num_fan_args args = {
-		.agfn.len = sizeof(args),
-		.agfn.mfun = 0x13,
-		.agfn.sfun = 0x05,
-		.nmfn = 0,
-	};
-
-	struct acpi_buffer input = { (acpi_size) sizeof(args), &args };
-	int status;
-
-	if (!num_fans)
-		return -1;
-
-	status = asus_wmi_evaluate_method_agfn(input);
-	if (status)
-		return status;
-
-	*num_fans = args.nmfn;
-	return 0;
-}
-
 static int asus_hwmon_agfn_fan_speed(struct asus_wmi *asus, int write, int fan,
 				     int *speed)
 {
@@ -1140,9 +1112,6 @@ static int asus_hwmon_agfn_fan_speed(struct asus_wmi *asus, int write, int fan,
 	status = asus_wmi_evaluate_method_agfn(input);
 
 	if (status || args.agfn.err) {
-		/* 0 ; 16 => no such fan */
-		pr_warn("asus_hwmon_agfn_fan_speed: asus_wmi_evaluate_method_agfn returned: %d ; %d\n",
-			status, args.agfn.err);
 		return -1;
 	}
 
@@ -1156,6 +1125,27 @@ static int asus_hwmon_agfn_fan_speed(struct asus_wmi *asus, int write, int fan,
 		*speed = args.speed;
 	}
 
+	return 0;
+}
+
+static int asus_hwmon_get_fan_number(struct asus_wmi *asus, int *num_fans)
+{
+	int status;
+	int speed = 0;
+
+	*num_fans = 0;
+
+	status = asus_hwmon_agfn_fan_speed(asus, 0, 1, &speed);
+	if (status)
+		return 0;
+
+	*num_fans = 1;
+
+	status = asus_hwmon_agfn_fan_speed(asus, 0, 2, &speed);
+	if (status)
+		return 0;
+
+	*num_fans = 2;
 	return 0;
 }
 
@@ -2068,7 +2058,7 @@ static int asus_wmi_fan_init(struct asus_wmi *asus)
 	asus->num_fans = -1;
 	asus->fan_manual_mode = 0;
 
-	status = asus_hwmon_agfn_get_fan_number(asus, &asus->num_fans);
+	status = asus_hwmon_get_fan_number(asus, &asus->num_fans);
 	if (status) {
 		asus->num_fans = 0;
 		pr_warn("Could not determine number of fans: %d\n", status);
