@@ -40,7 +40,7 @@ Nevertheless that script did it worse for me than the original controller - thus
 
 Single Fan | Two Fans (NVIDIA)
 -----------|-------------------
-N551JK     | 
+N551JK     |  UX32VD
 
 - **Features**
 ---------
