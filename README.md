@@ -38,15 +38,15 @@ Nevertheless that script did it worse for me than the original controller - thus
 - **Tested**
 -------------
 
-Single Fan | Two Fans (NVIDIA)
+Single Fan | Two Fans (just one fan controlled)
 -----------|-------------------
 N551JK     |  UX32VD
 
 - **Features**
 ---------
 - reading and setting fan speed(s)
-- determining number of fans automatically (no model list needed opposed to daringer/asus-fan)
 - no memory corruption (opposed to Felipe Contreras https://lkml.org/lkml/2013/10/8/800 patch)
 - using wmi interface
 - but still using virt_to_phys - nevertheless there is a ACPI function that is just marked "ACPI_FUTURE_USAGE" in "/drivers/acpi/osl.c#L37" thus after testing this module we could try to get that define to be deleted
 - quiet mode not implemented by now (maximum speed for fans in auto and manual mode)
+- no dual-fan support
