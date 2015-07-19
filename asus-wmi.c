@@ -231,7 +231,14 @@ struct asus_wmi {
 	struct asus_rfkill gps;
 	struct asus_rfkill uwb;
 
-	bool asus_hwmon_fan_manual_mode;
+  int fan1_manual_speed;
+  int fan2_manual_speed;
+
+  int fan1_offset_rpm;
+  int fan1_coeff_rpm;
+  int fan2_offset_rpm;
+  int fan2_coeff_rpm;
+
 	int asus_hwmon_num_fans;
 	int asus_hwmon_pwm;
 
@@ -1093,10 +1100,23 @@ static int asus_hwmon_agfn_fan_speed_read(struct asus_wmi *asus, int fan,
 		.fan = fan,
 		.speed = 0,
 	};
-	struct acpi_buffer input = { (acpi_size) sizeof(args), &args };
+	
+  struct acpi_buffer input = { (acpi_size) sizeof(args), &args };
+
+  if(asus->fan1_manual_speed > -1 && fan == 1) {
+    *speed = asus->fan1_offset_rpm + \
+             asus->fan1_manual_speed * asus->fan1_coeff_rpm;
+    return 0;
+  } else if(asus->fan2_manual_speed > -1 && fan == 2) {
+    *speed = asus->fan2_offset_rpm + \
+             asus->fan2_manual_speed * asus->fan2_coeff_rpm;
+    return 0;
+  }
+
+
 	int status;
 
-	if (fan != 1)
+	if (fan != 1 && fan != 2)
 		return -EINVAL;
 
 	status = asus_wmi_evaluate_method_agfn(input);
@@ -1105,7 +1125,7 @@ static int asus_hwmon_agfn_fan_speed_read(struct asus_wmi *asus, int fan,
 		return -ENXIO;
 
 	if (speed)
-		*speed = args.speed;
+		*speed = args.speed * 100;
 
 	return 0;
 }
@@ -1124,7 +1144,7 @@ static int asus_hwmon_agfn_fan_speed_write(struct asus_wmi *asus, int fan,
 	int status;
 
 	/* 1: for setting 1st fan's speed 0: setting auto mode */
-	if (fan != 1 && fan != 0)
+	if (fan != 1 && fan != 2 && fan != 0)
 		return -EINVAL;
 
 	status = asus_wmi_evaluate_method_agfn(input);
@@ -1134,6 +1154,18 @@ static int asus_hwmon_agfn_fan_speed_write(struct asus_wmi *asus, int fan,
 
 	if (speed && fan == 1)
 		asus->asus_hwmon_pwm = *speed;
+
+  // keep set manual speed, to realize reading while in manual mode
+  if (fan == 1) {
+    asus->fan1_manual_speed = speed ? *speed : 0;
+  } else if (fan == 2) {
+    asus->fan2_manual_speed = speed ? *speed : 0;
+
+  // alias for aut-mode ???
+  } else if (fan == 0) {
+    asus->fan1_manual_speed = -1;
+    asus->fan2_manual_speed = -1;
+  }
 
 	return 0;
 }
@@ -1164,7 +1196,8 @@ static int asus_hwmon_fan_set_auto(struct asus_wmi *asus)
 	if (status)
 		return -ENXIO;
 
-	asus->asus_hwmon_fan_manual_mode = false;
+  asus->fan1_manual_speed = -1;
+  asus->fan2_manual_speed = -1;
 
 	return 0;
 }
@@ -1174,10 +1207,6 @@ static int asus_hwmon_fan_rpm_show(struct device *dev, int fan)
 	struct asus_wmi *asus = dev_get_drvdata(dev);
 	int value;
 	int ret;
-
-	/* no speed readable on manual mode */
-	if (asus->asus_hwmon_fan_manual_mode)
-		return -ENXIO;
 
 	ret = asus_hwmon_agfn_fan_speed_read(asus, fan+1, &value);
 	if (ret) {
@@ -1245,8 +1274,6 @@ static ssize_t pwm1_store(struct device *dev,
 	state = asus_hwmon_agfn_fan_speed_write(asus, 1, &value);
 	if (state)
 		pr_warn("Setting fan speed failed: %d\n", state);
-	else
-		asus->asus_hwmon_fan_manual_mode = true;
 
 	return count;
 }
@@ -1257,7 +1284,7 @@ static ssize_t fan1_input_show(struct device *dev,
 {
 	int value = asus_hwmon_fan_rpm_show(dev, 0);
 
-	return sprintf(buf, "%d\n", value < 0 ? -1 : value*100);
+	return sprintf(buf, "%d\n", value < 0 ? -1 : value);
 
 }
 
@@ -1266,9 +1293,6 @@ static ssize_t pwm1_enable_show(struct device *dev,
 						 char *buf)
 {
 	struct asus_wmi *asus = dev_get_drvdata(dev);
-
-	if (asus->asus_hwmon_fan_manual_mode)
-		return sprintf(buf, "%d\n", ASUS_FAN_CTRL_MANUAL);
 
 	return sprintf(buf, "%d\n", ASUS_FAN_CTRL_AUTO);
 }
@@ -1287,9 +1311,7 @@ static ssize_t pwm1_enable_store(struct device *dev,
 	if (ret)
 		return ret;
 
-	if (state == ASUS_FAN_CTRL_MANUAL)
-		asus->asus_hwmon_fan_manual_mode = true;
-	else
+	if (state != ASUS_FAN_CTRL_MANUAL)
 		status = asus_hwmon_fan_set_auto(asus);
 
 	if (status)
@@ -2008,7 +2030,6 @@ static int asus_wmi_fan_init(struct asus_wmi *asus)
 
 	asus->asus_hwmon_pwm = -1;
 	asus->asus_hwmon_num_fans = -1;
-	asus->asus_hwmon_fan_manual_mode = false;
 
 	status = asus_hwmon_get_fan_number(asus, &asus->asus_hwmon_num_fans);
 	if (status) {
@@ -2100,6 +2121,14 @@ static int asus_wmi_add(struct platform_device *pdev)
 	asus_wmi_get_devstate(asus, ASUS_WMI_DEVID_WLAN, &result);
 	if (result & (ASUS_WMI_DSTS_PRESENCE_BIT | ASUS_WMI_DSTS_USER_BIT))
 		asus->driver->wlan_ctrl_by_user = 1;
+
+  asus->fan1_manual_speed = -1;
+  asus->fan2_manual_speed = -1;
+
+  asus->fan1_offset_rpm = 150;
+  asus->fan2_offset_rpm = 150;
+  asus->fan1_coeff_rpm = 33;
+  asus->fan2_coeff_rpm = 33;
 
 	return 0;
 
